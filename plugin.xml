@@ -1,0 +1,5 @@
+<library path="lib/librrt_planner_ros">
+<class name="my_global_planner/RRTPlanner" type="my_global_planner::RRTPlanner" base_class_type="nav_core::BaseGlobalPlanner">
+   <description>my own A* global planner plugin</description>
+ </class>
+</library>
