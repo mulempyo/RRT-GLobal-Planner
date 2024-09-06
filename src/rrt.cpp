@@ -11,24 +11,29 @@ PLUGINLIB_EXPORT_CLASS(rrt::RRTPlanner, nav_core::BaseGlobalPlanner)
 
 namespace rrt {
 
-RRTPlanner::RRTPlanner() : initialized_(false), goal_threshold_(0.5), step_size_(0.25), max_iterations_(10000) {}
+RRTPlanner::RRTPlanner() : initialized_(false), goal_threshold_(0.5), step_size_(0.5), max_iterations_(10000) {}
 
 RRTPlanner::RRTPlanner(std::string name, costmap_2d::Costmap2DROS *costmap_ros)
-    : initialized_(false), goal_threshold_(0.5), step_size_(0.25), max_iterations_(10000) {
+    : initialized_(false), goal_threshold_(0.5), step_size_(0.5), max_iterations_(10000) {
   initialize(name, costmap_ros);
 }
 
 RRTPlanner::~RRTPlanner() {
-  if(world_model_)
-    delete[] world_model_;
+  if(world_model_){
+    delete world_model_;
+  }
 }
 
 void RRTPlanner::initialize(std::string name, costmap_2d::Costmap2DROS *costmap_ros) {
-  ros::NodeHandle n;
+
+    ros::NodeHandle n;
 
   if (!initialized_) {
+    if(world_model_){
+      delete world_model_;
+    }
     costmap_ros_ = costmap_ros;
-    costmap_ = costmap_ros_->getCostmap();
+    costmap_ = costmap_ros->getCostmap();
     origin_x_ = costmap_->getOriginX();
     origin_y_ = costmap_->getOriginY();
     resolution_ = costmap_->getResolution();
@@ -73,57 +78,88 @@ bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometr
   tree.push_back(start_index);
   unsigned int final_node_index = 0;
 
-  for (unsigned int i = 0; i < max_iterations_; ++i) {
+  for (int i = 0; i < max_iterations_; ++i) {
     // Generate a random valid pose
     double random_x, random_y, random_th;
-    createRandomValidPose(random_x, random_y, random_th);
+      createRandomValidPose(random_x, random_y, random_th);
+    int nearest_index = nearestNode(random_x, random_y);
 
-    unsigned int nearest_index = nearestNode(random_x, random_y);
-
-    unsigned int nearest_x = nearest_index % width_;
-    unsigned int nearest_y = nearest_index / width_;
+    double nearest_x = nearest_index % width_;
+    double nearest_y = nearest_index / width_;
 
     double theta = atan2(random_y - nearest_y, random_x - nearest_x);
     double new_x = nearest_x + step_size_ * cos(theta);
     double new_y = nearest_y + step_size_ * sin(theta);
 
-    if (new_x >= width_ || new_y >= height_ || !isValidPose(new_x, new_y, theta)) {
+    unsigned int new_x_int = static_cast<unsigned int>(new_x);
+    unsigned int new_y_int = static_cast<unsigned int>(new_y);
+
+    if (new_x_int >= width_ || new_y_int >= height_ || !isValidPose(new_x, new_y, theta)) {
       continue;
     }
 
-    unsigned int new_index = new_y * width_ + new_x;
+    unsigned int new_index = new_y_int * width_ + new_x_int;
     tree.push_back(new_index);
     parent_map[new_index] = nearest_index;
 
     if (distance(new_x, new_y, goal_x, goal_y) < goal_threshold_) {
-      final_node_index = goal_index;
-      parent_map[goal_index] = new_index;
-      tree.push_back(goal_index);
-      break;
+     //move to goal one more time
+      double dx = goal_x - new_x;
+      double dy = goal_y - new_y;
+      double mag = std::sqrt(dx * dx + dy * dy);
+
+      if (mag > step_size_) {
+        dx /= mag;
+        dy /= mag;
+
+        new_x = new_x + step_size_ * dx;
+        new_y = new_y + step_size_ * dy;
+
+        //check map boundary and valid pose
+        unsigned int new_x_int = static_cast<unsigned int>(new_x);
+        unsigned int new_y_int = static_cast<unsigned int>(new_y);
+
+        if (new_x_int >= width_ || new_y_int >= height_) {
+            continue;  
+        }
+
+        if (isValidPose(new_x, new_y, theta)) {
+            unsigned int new_index = new_y_int * width_ + new_x_int;
+            final_node_index = new_index;
+            parent_map[new_index] = nearest_index;
+            tree.push_back(new_index);
+        }
+      //already close to goal
+        }else {
+         final_node_index = goal_index;
+         parent_map[goal_index] = new_index;
+         tree.push_back(goal_index);
+       }
+       break;
+      }
     }
+  
+  if(final_node_index != 0){
+  unsigned int current_index = final_node_index;
+  while (current_index != start_index) {
+    unsigned int current_x = current_index % width_;
+    unsigned int current_y = current_index / width_;
+    double wx, wy;
+    mapToWorld(current_x, current_y, wx, wy);
+    geometry_msgs::PoseStamped pose = goal;
+    pose.pose.position.x = wx;
+    pose.pose.position.y = wy;
+    pose.pose.position.z = 0;
+    pose.pose.orientation.w = 1.0;
+    plan.push_back(pose);
+    current_index = parent_map[current_index];
   }
 
-  // Reconstruct path
-  if (final_node_index != 0) {
-    unsigned int current_index = final_node_index;
-    while (current_index != start_index) {
-      unsigned int current_x = current_index % width_;
-      unsigned int current_y = current_index / width_;
-      double wx, wy;
-      mapToWorld(current_x, current_y, wx, wy);
-      geometry_msgs::PoseStamped pose = goal;
-      pose.pose.position.x = wx;
-      pose.pose.position.y = wy;
-      pose.pose.position.z = 0;
-      pose.pose.orientation.w = 1.0;
-      plan.push_back(pose);
-      current_index = parent_map[current_index];
-    }
-    std::reverse(plan.begin(), plan.end());
-    return true;
-  } else {
-    ROS_WARN("Failed to find a valid plan.");
-    return false;
+  std::reverse(plan.begin(), plan.end());
+  return true;
+  }else{
+   ROS_WARN("Failed to find a valid path");
+   return false;
   }
 }
 
@@ -144,11 +180,14 @@ double RRTPlanner::footprintCost(double x, double y, double th) const {
 
 bool RRTPlanner::isValidPose(double x, double y, double th) const {
   double footprint_cost = footprintCost(x, y, th);
-  if ((footprint_cost < 0) || (footprint_cost > 128)) return false;
+  if ((footprint_cost < 0) || (footprint_cost > 128)) {
+    ROS_WARN("Invalid pose.");
+    return false;
+  }
   return true;
 }
 
-void RRTPlanner::createRandomValidPose(double &x, double &y, double &th) const {
+bool RRTPlanner::createRandomValidPose(double &x, double &y, double &th) const {
   // get bounds of the costmap in world coordinates
   double wx_min, wy_min;
   costmap_->mapToWorld(0, 0, wx_min, wy_min);
@@ -158,38 +197,46 @@ void RRTPlanner::createRandomValidPose(double &x, double &y, double &th) const {
   unsigned int my_max = costmap_->getSizeInCellsY();
   costmap_->mapToWorld(mx_max, my_max, wx_max, wy_max);
 
-  bool found_pose = false;
-
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> dis(0.0, 1.0);
 
-  while (!found_pose) {
-    double wx_rand = dis(gen);
-    wx_rand = wx_min + wx_rand * (wx_max - wx_min);
+  int max_attempts = 1000;
+  int attempts = 0;
 
-    double wy_rand = dis(gen);
-    wy_rand = wy_min + wy_rand * (wy_max - wy_min);
-
-    double th_rand = dis(gen);
-    th_rand = -M_PI + th_rand * (M_PI - -M_PI);
+  while (attempts < max_attempts) {
+    attempts++;
+    
+    double wx_rand = wx_min + dis(gen) * (wx_max - wx_min);
+    double wy_rand = wy_min + dis(gen) * (wy_max - wy_min);
+    double th_rand = -M_PI + dis(gen) * (M_PI - (-M_PI));
 
     if (isValidPose(wx_rand, wy_rand, th_rand)) {
       x = wx_rand;
       y = wy_rand;
-      th = th_rand;
-      found_pose = true;
+      th = th_rand; 
+      return true;
     }
   }
+   
+  ROS_WARN("Failed to generate a valid random pose after %d attempts.", max_attempts);
+  return false;
 }
 
-unsigned int RRTPlanner::nearestNode(double random_x, double random_y) {
-  unsigned int nearest_index = 0;
+int RRTPlanner::nearestNode(double random_x, double random_y) {
+  int nearest_index = 0;
   double min_dist = std::numeric_limits<double>::max();
-  for (unsigned int node_index : tree) {
+
+  if(tree.empty()){
+     ROS_WARN("tree is empty. can`t found nearest node.");
+     return -1;
+   }
+
+  for (int node_index : tree) {
     double node_x = static_cast<double>(node_index % width_);
     double node_y = static_cast<double>(node_index / width_);
     double dist = distance(node_x, node_y, random_x, random_y);
+
     if (dist < min_dist) {
       min_dist = dist;
       nearest_index = node_index;
