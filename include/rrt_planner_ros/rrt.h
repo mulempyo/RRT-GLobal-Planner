@@ -26,8 +26,8 @@ private:
 
     double footprintCost(double x, double y, double th) const;
     bool isValidPose(double x, double y, double th) const;
-    void createRandomValidPose(double &x, double &y, double &th) const;
-    unsigned int nearestNode(double random_x, double random_y);
+    bool createRandomValidPose(double &x, double &y, double &th) const;
+    int nearestNode(double random_x, double random_y);
     double distance(double x1, double y1, double x2, double y2);
     void mapToWorld(unsigned int mx, unsigned int my, double& wx, double& wy);
 
@@ -40,7 +40,7 @@ private:
     double goal_threshold_;
     double step_size_;
     unsigned int max_iterations_;
-    base_local_planner::CostmapModel* world_model_;
+    base_local_planner::CostmapModel* world_model_ = nullptr;
  };
 };
 #endif
