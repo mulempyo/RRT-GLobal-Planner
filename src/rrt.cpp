@@ -6,6 +6,7 @@
 #include <random>
 #include <limits>
 #include <algorithm>
+#include <mutex>
 #include <tf/tf.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -14,10 +15,10 @@ PLUGINLIB_EXPORT_CLASS(rrt::RRTPlanner, nav_core::BaseGlobalPlanner)
 
 namespace rrt {
 
-RRTPlanner::RRTPlanner() : initialized_(false), goal_threshold_(0.5), step_size_(0.25) {}
+RRTPlanner::RRTPlanner() : initialized_(false), goal_threshold_(0.5), step_size_(0.05) {}
 
 RRTPlanner::RRTPlanner(std::string name, costmap_2d::Costmap2DROS *costmap_ros)
-    : initialized_(false), goal_threshold_(0.5), step_size_(0.25) {
+    : initialized_(false), goal_threshold_(0.5), step_size_(0.05) {
   initialize(name, costmap_ros);
 }
 
@@ -48,7 +49,7 @@ void RRTPlanner::initialize(std::string name, costmap_2d::Costmap2DROS *costmap_
 
 bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometry_msgs::PoseStamped &goal,
                           std::vector<geometry_msgs::PoseStamped> &plan) {
-  ros::NodeHandle n;
+  boost::mutex::scoped_lock lock(mutex_);                           
 
   if (!initialized_) {
     ROS_ERROR("RRTPlanner has not been initialized, please call initialize() before use.");
@@ -90,7 +91,7 @@ bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometr
   unsigned int final_node_index = 0;
 
   int i = 0;
-  int max_iterations_ = 1000000;
+  int max_iterations_ = 100000000;
 
   while (i < max_iterations_) {
     // Generate a random valid pose
@@ -115,8 +116,15 @@ bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometr
       unsigned int new_x_int, new_y_int, new_index;
       costmap_->worldToMap(new_x,new_y,new_x_int,new_y_int);
       new_index = new_y_int * width_ + new_x_int;
-      final_node_index = new_index;
-      tree.emplace_back(new_index, nearest_index); 
+
+      if(new_index != nearest_index && std::find_if(tree.begin(), tree.end(),
+      [new_index](const std::pair<unsigned int, unsigned int> &node) {return node.first == new_index; }) == tree.end()){
+        tree.emplace_back(new_index, nearest_index); 
+      }else{
+        ROS_WARN("skipping invalid or duplicate node: %d", new_index);
+        continue;
+      }
+      
 
     if(isValidPathBetweenPoses(new_x, new_y, new_th, goal.pose.position.x, goal.pose.position.y, goal_yaw)){
       final_node_index = goal_index;
@@ -137,9 +145,14 @@ bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometr
   if (final_node_index != 0) {
     unsigned int current_index = final_node_index;
     double wx,wy;
-    costmap_->mapToWorld(current_index % width_,current_index / width_,wx,wy);
+    unsigned int mx,my; 
+    mx = current_index % width_;
+    my = current_index / width_;
+    costmap_->mapToWorld(mx,my,wx,wy);
     while (current_index != start_index) {
-      geometry_msgs::PoseStamped pose = goal;
+      geometry_msgs::PoseStamped pose;
+      pose.header.frame_id = costmap_ros_->getGlobalFrameID();  
+      pose.header.stamp = ros::Time::now();
       pose.pose.position.x = wx;
       pose.pose.position.y = wy;
       pose.pose.position.z = 0;
@@ -150,8 +163,20 @@ bool RRTPlanner::makePlan(const geometry_msgs::PoseStamped &start, const geometr
      [current_index](const std::pair<unsigned int, unsigned int> &node) { //node reference tree
      return node.first == current_index;}); // node.first == current_index is true, current_index = it->second;
      
+      if(it == tree.end()){
+        ROS_WARN("failed to find next node for current_index:%d",current_index);
+        break;
+      }
+      if(it->first == it->second){
+        ROS_WARN("cycle detected in tree at index:%d",it->first);
+        break;
+      }
       ROS_INFO("current_index:%d, next_index:%d",current_index, it->second);
-      current_index = it->second;  
+      current_index = it->second; 
+
+      mx = current_index % width_;
+      my = current_index / width_;
+      costmap_->mapToWorld(mx,my,wx,wy); 
     }
 
 /* tree pair (child, parent)
@@ -245,8 +270,8 @@ unsigned int RRTPlanner::nearestNode(double random_x, double random_y) {
     double node_x,node_y;
     costmap_->mapToWorld(node_index % width_,node_index / width_,node_x,node_y);
     double dist = distance(node_x, node_y, random_x, random_y);
-
-    if (dist < min_dist) {
+    ROS_INFO("tree node:%d -> %d", node.first, node.second);
+    if (dist < min_dist && dist > 0.001) { 
       min_dist = dist;
       nearest_index = node_index;
     }
@@ -262,7 +287,7 @@ void RRTPlanner::createPoseWithinRange(double start_x, double start_y, double st
   double y_step = end_y - start_y;
   double mag = sqrt((x_step * x_step) + (y_step * y_step));
 
-  if (mag < range) {
+  if (mag < 0.001) {
     new_x = end_x;
     new_y = end_y;
     new_th = end_th;
@@ -307,6 +332,7 @@ void RRTPlanner::publishPlan(const std::vector<geometry_msgs::PoseStamped> &path
 
   nav_msgs::Path path_visual;
   path_visual.poses.resize(path.size());
+  ROS_INFO("path size: %f",path.size());
 
   if (path.empty()) {
     path_visual.header.frame_id = costmap_ros_->getGlobalFrameID();
