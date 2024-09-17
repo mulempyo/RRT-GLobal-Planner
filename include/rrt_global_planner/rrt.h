@@ -9,6 +9,7 @@
 #include <costmap_2d/costmap_2d_ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <tf2/LinearMath/Quaternion.h>
+#include <boost/thread/mutex.hpp>
 
 namespace rrt {
 
@@ -40,7 +41,8 @@ private:
     void publishPlan(const std::vector<geometry_msgs::PoseStamped> &path) const;
     double distance(double x1, double y1, double x2, double y2);
     void mapToWorld(unsigned int mx, unsigned int my, double& wx, double& wy);
-
+ 
+    boost::mutex mutex_;
     std::vector<std::pair<unsigned int, unsigned int>> tree;
     costmap_2d::Costmap2D* costmap_;
     costmap_2d::Costmap2DROS* costmap_ros_;

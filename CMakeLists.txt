@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(rrt_planner_ros)
+project(rrt_global_planner)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   pluginlib
   roscpp
   tf
+  base_local_planner
 )
 
 ## System dependencies are found with CMake's conventions
@@ -106,8 +107,8 @@ find_package(catkin REQUIRED COMPONENTS
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES rrt_planner_ros
-   CATKIN_DEPENDS costmap_2d nav_core pluginlib roscpp tf
+#  LIBRARIES rrt_global_planner
+   CATKIN_DEPENDS costmap_2d nav_core pluginlib roscpp tf base_local_planner
 #  DEPENDS system_lib
 )
 
@@ -123,9 +124,14 @@ include_directories(
 )
 
 ## Declare a C++ library
- add_library(rrt_planner_ros
+ add_library(rrt_global_planner
    src/rrt.cpp
  )
+
+target_link_libraries(rrt_global_planner
+   ${catkin_LIBRARIES}
+   base_local_planner
+)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -135,7 +141,7 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/rrt_planner_ros_node.cpp)
+# add_executable(${PROJECT_NAME}_node src/rrt_global_planner_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -199,7 +205,7 @@ include_directories(
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_rrt_planner_ros.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_rrt_global_planner.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()
